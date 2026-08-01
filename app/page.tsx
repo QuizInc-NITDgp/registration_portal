@@ -105,12 +105,6 @@ export default function LoginPage() {
           </svg>
           {loading ? "Signing in..." : "Sign in with Google"}
         </button>
-
-        <div className="mt-8 text-center">
-          <p className="text-xs text-slate-400 font-medium">
-            Protected member portal &bull; QuizInc, NIT Durgapur
-          </p>
-        </div>
       </div>
     </main>
   );
