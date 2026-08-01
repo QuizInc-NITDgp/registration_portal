@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc, collection, addDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import { useRouter } from "next/navigation";
@@ -12,6 +12,7 @@ export default function EditProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sessionPath, setSessionPath] = useState<{ passoutYear: string; docId: string } | null>(null);
+  const [isNewUserRegistration, setIsNewUserRegistration] = useState(false);
 
   const [formData, setFormData] = useState({
     graduationYear: "",
@@ -31,43 +32,65 @@ export default function EditProfilePage() {
 
   useEffect(() => {
     const sessionStr = localStorage.getItem("quizinc_session");
-    if (!sessionStr) {
+    const tempSessionStr = localStorage.getItem("quizinc_temp_session");
+
+    if (!sessionStr && !tempSessionStr) {
       router.push("/");
       return;
     }
 
-    const session = JSON.parse(sessionStr);
-    setSessionPath(session);
+    if (tempSessionStr) {
+      // New user registering for the first time
+      const tempUser = JSON.parse(tempSessionStr);
+      setIsNewUserRegistration(true);
+      setFormData({
+        graduationYear: "",
+        fullName: tempUser.fullName || "",
+        email: tempUser.email || "",
+        positionInQuizInc: "",
+        currentRole: "",
+        organization: "",
+        instagram: "",
+        linkedin: "",
+      });
+      setExistingPhoto(tempUser.profilePhoto || "");
+      setImagePreview(tempUser.profilePhoto || null);
+      setLoading(false);
+    } else if (sessionStr) {
+      // Existing user editing profile
+      const session = JSON.parse(sessionStr);
+      setSessionPath(session);
 
-    const fetchUserData = async () => {
-      try {
-        const docRef = doc(db, "allMembers", session.passoutYear, "members", session.docId);
-        const docSnap = await getDoc(docRef);
+      const fetchUserData = async () => {
+        try {
+          const docRef = doc(db, "allMembers", session.passoutYear, "members", session.docId);
+          const docSnap = await getDoc(docRef);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setFormData({
-            graduationYear: data.graduationYear || session.passoutYear,
-            fullName: data.fullName || "",
-            email: data.email || "",
-            positionInQuizInc: data.positionInQuizInc || "",
-            currentRole: data.currentRole || "",
-            organization: data.organization || "",
-            instagram: data.instagram || "",
-            linkedin: data.linkedin || "",
-          });
-          setExistingPhoto(data.profilePhoto || "");
-          setImagePreview(data.profilePhoto || null);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setFormData({
+              graduationYear: data.graduationYear || session.passoutYear,
+              fullName: data.fullName || "",
+              email: data.email || "",
+              positionInQuizInc: data.positionInQuizInc || "",
+              currentRole: data.currentRole || "",
+              organization: data.organization || "",
+              instagram: data.instagram || "",
+              linkedin: data.linkedin || "",
+            });
+            setExistingPhoto(data.profilePhoto || "");
+            setImagePreview(data.profilePhoto || null);
+          }
+        } catch (err) {
+          console.error("Error fetching data for editing:", err);
+          setErrorMessage("Failed to load profile details.");
+        } finally {
+          setLoading(false);
         }
-      } catch (err) {
-        console.error("Error fetching data for editing:", err);
-        setErrorMessage("Failed to load profile details.");
-      } finally {
-        setLoading(false);
-      }
-    };
+      };
 
-    fetchUserData();
+      fetchUserData();
+    }
   }, [router]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,8 +112,6 @@ export default function EditProfilePage() {
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionPath) return;
-
     const newYear = formData.graduationYear.trim();
     if (!newYear) {
       setErrorMessage("Graduation year cannot be empty.");
@@ -106,7 +127,7 @@ export default function EditProfilePage() {
         imageUrl = await uploadImageToCloudinary(imageFile);
       }
 
-      const updatedData = {
+      const profilePayload = {
         graduationYear: newYear,
         fullName: formData.fullName,
         email: formData.email,
@@ -119,31 +140,45 @@ export default function EditProfilePage() {
         updatedAt: new Date(),
       };
 
-      // Check if the graduation year changed
-      if (newYear !== sessionPath.passoutYear) {
-        // 1. Create a reference in the NEW passout year subcollection (using the same docId or auto-id)
-        const newDocRef = doc(db, "allMembers", newYear, "members", sessionPath.docId);
-        await setDoc(newDocRef, updatedData);
+      if (isNewUserRegistration) {
+        // Create the document for the very first time in the selected graduation year subcollection
+        const membersRef = collection(db, "allMembers", newYear, "members");
+        const newDocRef = await addDoc(membersRef, {
+          ...profilePayload,
+          createdAt: new Date(),
+        });
 
-        // 2. Delete the document from the OLD passout year subcollection
-        const oldDocRef = doc(db, "allMembers", sessionPath.passoutYear, "members", sessionPath.docId);
-        await deleteDoc(oldDocRef);
-
-        // 3. Update localStorage session with the new passout year
+        // Clear temp session and set real persistent session
+        localStorage.removeItem("quizinc_temp_session");
         localStorage.setItem(
           "quizinc_session",
-          JSON.stringify({ passoutYear: newYear, docId: sessionPath.docId })
+          JSON.stringify({ passoutYear: newYear, docId: newDocRef.id })
         );
-      } else {
-        // Year didn't change, just update the existing document normally
-        const targetDocRef = doc(db, "allMembers", sessionPath.passoutYear, "members", sessionPath.docId);
-        await setDoc(targetDocRef, updatedData, { merge: true });
+      } else if (sessionPath) {
+        // Existing user update logic
+        const updatedData = { ...profilePayload };
+
+        if (newYear !== sessionPath.passoutYear) {
+          // Move document to new passout year collection
+          const newDocRef = doc(db, "allMembers", newYear, "members", sessionPath.docId);
+          await setDoc(newDocRef, updatedData);
+
+          const oldDocRef = doc(db, "allMembers", sessionPath.passoutYear, "members", sessionPath.docId);
+          await deleteDoc(oldDocRef);
+
+          localStorage.setItem(
+            "quizinc_session",
+            JSON.stringify({ passoutYear: newYear, docId: sessionPath.docId })
+          );
+        } else {
+          const targetDocRef = doc(db, "allMembers", sessionPath.passoutYear, "members", sessionPath.docId);
+          await setDoc(targetDocRef, updatedData, { merge: true });
+        }
       }
 
-      // Redirect back to profile view
       router.push("/profile");
     } catch (error) {
-      console.error("Error updating profile:", error);
+      console.error("Error saving profile:", error);
       setErrorMessage("Failed to save changes. Please try again.");
       setSaving(false);
     }
@@ -164,8 +199,12 @@ export default function EditProfilePage() {
           <div className="w-16 h-16 relative mb-3 overflow-hidden rounded-xl border border-slate-200 shadow-sm flex items-center justify-center bg-slate-100">
             <Image src="/logo.jpg" alt="Logo" fill className="object-cover" priority />
           </div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Edit Profile</h1>
-          <p className="text-sm text-slate-500 mt-1">Update your information and details</p>
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+            {isNewUserRegistration ? "Complete Your Profile" : "Edit Profile"}
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            {isNewUserRegistration ? "Please fill in your details to register" : "Update your information and details"}
+          </p>
         </div>
 
         <form onSubmit={handleUpdate} className="space-y-6">
@@ -287,17 +326,19 @@ export default function EditProfilePage() {
           )}
 
           <div className="flex gap-4">
-            <button
-              type="button"
-              onClick={() => router.push("/profile")}
-              className="w-1/3 py-3.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-xl shadow-sm transition duration-200"
-            >
-              Cancel
-            </button>
+            {!isNewUserRegistration && (
+              <button
+                type="button"
+                onClick={() => router.push("/profile")}
+                className="w-1/3 py-3.5 px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-xl shadow-sm transition duration-200"
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="submit"
               disabled={saving}
-              className="w-2/3 py-3.5 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition duration-200 disabled:opacity-50"
+              className={`${isNewUserRegistration ? "w-full" : "w-2/3"} py-3.5 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition duration-200 disabled:opacity-50`}
             >
               {saving ? "Saving Changes..." : "Save Profile"}
             </button>

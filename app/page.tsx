@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { signInWithPopup } from "firebase/auth";
-import { collection, query, where, getDocs, addDoc } from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import { auth, googleProvider, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -56,27 +56,15 @@ export default function LoginPage() {
         localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
         router.push("/profile");
       } else {
-        // New user -> Create an initial skeleton record (defaulting to 2026 or prompt year)
-        const defaultYear = "2026";
-        const membersSubcollectionRef = collection(db, "allMembers", defaultYear, "members");
-        const newDocRef = await addDoc(membersSubcollectionRef, {
+        // New user -> Do NOT create in DB yet. Store temp session data for the form.
+        const tempSession = {
           email: userEmail,
           fullName: user.displayName || "",
-          graduationYear: defaultYear,
-          positionInQuizInc: "",
-          currentRole: "",
-          organization: "",
-          instagram: "",
-          linkedin: "",
           profilePhoto: user.photoURL || "",
-          createdAt: new Date(),
-        });
-
-        localStorage.setItem(
-          "quizinc_session",
-          JSON.stringify({ passoutYear: defaultYear, docId: newDocRef.id })
-        );
-        // Go straight to edit page for new users to fill blanks
+        };
+        localStorage.setItem("quizinc_temp_session", JSON.stringify(tempSession));
+        
+        // Go straight to edit page for new users to fill blanks and create record on submit
         router.push("/profile/edit");
       }
     } catch (error) {
@@ -88,7 +76,6 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      {/* Added border-blue-200 and border-2 for a clear blue border */}
       <div className="max-w-md w-full bg-white p-8 sm:p-10 shadow-xl rounded-2xl border-2 border-blue-200">
         <div className="text-center mb-8 flex flex-col items-center">
           <div className="w-16 h-16 relative mb-3 overflow-hidden rounded-xl border border-slate-200 shadow-sm flex items-center justify-center bg-slate-100">
@@ -121,7 +108,7 @@ export default function LoginPage() {
 
         <div className="mt-8 text-center">
           <p className="text-xs text-slate-400 font-medium">
-            Protected member portal &bull; QuizInc,NIT Durgapur
+            Protected member portal &bull; QuizInc, NIT Durgapur
           </p>
         </div>
       </div>
