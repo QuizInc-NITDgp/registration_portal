@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
 
+  // 1. Check existing session on mount
   useEffect(() => {
     const sessionStr = localStorage.getItem("quizinc_session");
     if (sessionStr) {
@@ -19,34 +20,7 @@ export default function LoginPage() {
     }
   }, [router]);
 
-  // Optional: Keep redirect result handler for actual mobile devices
-  useEffect(() => {
-    let isMounted = true;
-    const handleRedirectAuth = async () => {
-      try {
-        const result = await getRedirectResult(auth);
-        if (!result || !isMounted) return;
-
-        setLoading(true);
-        await processUserSession(result.user);
-      } catch (error) {
-        if (isMounted) {
-          console.error("Google redirect login error:", error);
-          // Ignore empty state errors if it's just a remount artifact
-          if (!(error as Error).message?.includes("missing initial state")) {
-            setErrorMessage("Failed to sign in with Google. Please try again.");
-          }
-          setLoading(false);
-        }
-      }
-    };
-
-    handleRedirectAuth();
-    return () => {
-      isMounted = false;
-    };
-  }, [router]);
-
+  // Shared session processing logic
   const processUserSession = async (user: any) => {
     const userEmail = user.email;
     if (!userEmail) {
@@ -84,30 +58,66 @@ export default function LoginPage() {
     }
   };
 
+  // 2. Handle incoming redirect results safely
+  useEffect(() => {
+    let isMounted = true;
+
+    const handleRedirectAuth = async () => {
+      try {
+        // Only trigger loading if we expect a redirect result coming back
+        const result = await getRedirectResult(auth);
+        if (!result || !isMounted) return;
+
+        setLoading(true);
+        await processUserSession(result.user);
+      } catch (error: any) {
+        if (isMounted) {
+          console.error("Google redirect login error:", error);
+          // Safely ignore safe internal errors or missing state triggers during hot-reloads
+          if (error.code !== "auth/internal-error" && !error.message?.includes("missing initial state")) {
+            setErrorMessage("Failed to sign in with Google. Please try again.");
+          }
+          setLoading(false);
+        }
+      }
+    };
+
+    handleRedirectAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setErrorMessage("");
+    
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
 
-      // Detect if user is on mobile
-      const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
       if (isMobile) {
-        // Use redirect for mobile devices
+        // Mobile uses redirect (Page will reload, so setLoading stays true naturally)
         await signInWithRedirect(auth, provider);
       } else {
-        // Use popup for laptops/desktops to completely bypass sessionStorage bugs on localhost
+        // Desktop uses popup
         const result = await signInWithPopup(auth, provider);
         await processUserSession(result.user);
       }
     } catch (error: any) {
       console.error("Google login error:", error);
-      if (error.code !== "auth/cancelled-popup-request") {
+      setLoading(false);
+      
+      if (error.code === "auth/popup-closed-by-user") {
+        setErrorMessage("Sign-in popup was closed before completion.");
+      } else if (error.code === "auth/popup-blocked") {
+        setErrorMessage("Popup was blocked by your browser. Please allow popups.");
+      } else {
         setErrorMessage("Failed to sign in with Google. Please try again.");
       }
-      setLoading(false);
     }
   };
 
