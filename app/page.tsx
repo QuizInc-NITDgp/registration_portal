@@ -29,6 +29,7 @@ export default function LoginPage() {
       return;
     }
 
+    console.log("Processing session for:", userEmail);
     const passoutYearsGroup = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
     let foundPath: { passoutYear: string; docId: string } | null = null;
 
@@ -45,9 +46,11 @@ export default function LoginPage() {
     }
 
     if (foundPath) {
+      console.log("Member found! Redirecting to /profile");
       localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
       router.push("/profile");
     } else {
+      console.log("Member not found. Redirecting to /profile/edit");
       const tempSession = {
         email: userEmail,
         fullName: user.displayName || "",
@@ -58,22 +61,27 @@ export default function LoginPage() {
     }
   };
 
-  // 2. Handle incoming redirect results safely
+  // 2. Handle incoming redirect results reliably on mobile load
   useEffect(() => {
     let isMounted = true;
 
     const handleRedirectAuth = async () => {
       try {
-        // Only trigger loading if we expect a redirect result coming back
-        const result = await getRedirectResult(auth);
-        if (!result || !isMounted) return;
-
         setLoading(true);
-        await processUserSession(result.user);
+        const result = await getRedirectResult(auth);
+        
+        if (!isMounted) return;
+
+        if (result && result.user) {
+          console.log("Redirect result detected successfully:", result.user.email);
+          await processUserSession(result.user);
+        } else {
+          // No active redirect payload found, clear loading state
+          setLoading(false);
+        }
       } catch (error: any) {
         if (isMounted) {
           console.error("Google redirect login error:", error);
-          // Safely ignore safe internal errors or missing state triggers during hot-reloads
           if (error.code !== "auth/internal-error" && !error.message?.includes("missing initial state")) {
             setErrorMessage("Failed to sign in with Google. Please try again.");
           }
@@ -100,7 +108,7 @@ export default function LoginPage() {
       const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
       if (isMobile) {
-        // Mobile uses redirect (Page will reload, so setLoading stays true naturally)
+        // Mobile uses redirect
         await signInWithRedirect(auth, provider);
       } else {
         // Desktop uses popup
