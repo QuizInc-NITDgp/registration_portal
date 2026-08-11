@@ -6,11 +6,12 @@ import { collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import toast, { Toaster } from "react-hot-toast";
 
 export default function LoginPage() {
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
 
   // 1. Check local session storage on mount
   useEffect(() => {
@@ -23,7 +24,7 @@ export default function LoginPage() {
   const processUserSession = async (user: any) => {
     const userEmail = user.email;
     if (!userEmail) {
-      setErrorMessage("Could not retrieve email from Google account.");
+      toast.error("Could not retrieve email from Google account.");
       setLoading(false);
       return;
     }
@@ -45,7 +46,8 @@ export default function LoginPage() {
 
     if (foundPath) {
       localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
-      router.push("/profile");
+      toast.success("Welcome back! Redirecting...");
+      setTimeout(() => router.push("/profile"), 1000);
     } else {
       const tempSession = {
         email: userEmail,
@@ -53,7 +55,8 @@ export default function LoginPage() {
         profilePhoto: user.photoURL || "",
       };
       localStorage.setItem("quizinc_temp_session", JSON.stringify(tempSession));
-      router.push("/profile/edit");
+      toast("Complete your profile first!");
+      setTimeout(() => router.push("/profile/edit"), 1000);
     }
   };
 
@@ -71,7 +74,7 @@ export default function LoginPage() {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    setErrorMessage("");
+    setPopupBlocked(false);
     
     try {
       const provider = new GoogleAuthProvider();
@@ -89,48 +92,148 @@ export default function LoginPage() {
       console.error("Google login error:", error);
       setLoading(false);
       
+      if (error.code === "auth/cancelled-popup-request") return;
       if (error.code === "auth/popup-closed-by-user") {
-        setErrorMessage("Sign-in popup was closed before completion.");
-      } else if (error.code === "auth/popup-blocked") {
-        setErrorMessage("Popup was blocked by your browser. Please allow popups.");
-      } else {
-        setErrorMessage("Failed to sign in with Google. Please try again.");
+        toast.error("Sign-in popup was closed before completion.");
+        return;
       }
+      if (error.code === "auth/popup-blocked") {
+        setPopupBlocked(true);
+        toast.error("Popup was blocked by your browser.");
+        return;
+      }
+      toast.error("Failed to sign in with Google. Please try again.");
     }
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full bg-white p-8 sm:p-10 shadow-xl rounded-2xl border-2 border-blue-200">
-        <div className="text-center mb-8 flex flex-col items-center">
-          <div className="w-16 h-16 relative mb-3 overflow-hidden rounded-xl border border-slate-200 shadow-sm flex items-center justify-center bg-slate-100">
-            <Image src="/logo.jpg" alt="Logo" fill className="object-cover" priority />
+    <>
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          style: {
+            background: "rgba(6,9,26,0.95)",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.1)",
+            backdropFilter: "blur(12px)",
+            fontSize: "13px",
+            fontWeight: "600",
+          },
+          duration: 3000,
+        }}
+      />
+      <style>{`
+        @keyframes shimmer {
+          0%   { background-position: -200% center; }
+          100% { background-position:  200% center; }
+        }
+        @keyframes panelIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes itemIn {
+          from { opacity: 0; transform: translateX(-12px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .panel-in   { animation: panelIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .login-item { animation: itemIn 0.4s ease-out both; }
+        .login-item:nth-child(1) { animation-delay: 0.1s; }
+        .login-item:nth-child(2) { animation-delay: 0.17s; }
+        .login-item:nth-child(3) { animation-delay: 0.24s; }
+      `}</style>
+
+      <main className="relative min-h-screen flex items-center justify-center overflow-hidden p-4">
+        <Image src="/bg.jpg" alt="background" fill className="object-cover brightness-[0.22] -z-10" priority />
+        <div className="absolute inset-0 -z-10 opacity-[0.035]"
+          style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 60px,rgba(255,255,255,0.8) 60px,rgba(255,255,255,0.8) 61px)" }} />
+
+        <div className="absolute -left-20 top-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-red-700/15 blur-[100px] -z-10" />
+        <div className="absolute -right-20 top-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full bg-blue-700/15 blur-[100px] -z-10" />
+
+        <div className="panel-in relative flex flex-col md:flex-row max-w-3xl w-full rounded-2xl overflow-hidden border border-white/[0.07] shadow-2xl"
+          style={{ background: "rgba(6, 9, 26, 0.88)", backdropFilter: "blur(24px)", boxShadow: "0 0 0 1px rgba(255,255,255,0.04), 0 32px 80px rgba(0,0,0,0.8)" }}>
+
+          <div className="absolute top-0 left-0 right-0 h-[2px] z-10"
+            style={{ background: "linear-gradient(90deg,#3b82f6,#ef4444,#3b82f6)", backgroundSize: "200% 100%", animation: "shimmer 4s linear infinite" }} />
+
+          <div className="relative w-full md:flex-1 md:min-h-[460px]">
+            <Image
+              src="/finalposter.jpeg"
+              alt="football legends"
+              width={800}
+              height={1200}
+              className="w-full h-auto md:absolute md:inset-0 md:h-full md:object-cover opacity-90"
+              priority
+            />
+            <div className="absolute inset-0 border-r border-white/[0.05]" />
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">QuizInc Member Portal</h1>
-          <p className="text-sm text-slate-500 mt-1">Register your profile to be displayed in the club website</p>
+
+          <div className="flex-1 flex flex-col justify-center gap-6 p-7 md:p-9">
+            <div className="flex items-center justify-between">
+              <Image src="/quizinc.jpg" alt="QuizInc logo" width={85} height={32} className="object-contain opacity-85 bg-transparent" />
+            </div>
+
+            <div>
+              <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white leading-none">
+                WELCOME
+                <span className="ml-2" style={{
+                  background: "linear-gradient(135deg, #3b82f6, #ef4444)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}>BACK</span>
+              </h1>
+              <p className="text-gray-400 text-[14px] mt-2 font-medium tracking-wide">
+                Register your profile to be displayed in the club website.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {[
+                "Compete with fans worldwide",
+                "Answer rapid-fire quizzes",
+                "Climb the global leaderboard",
+              ].map((text, i) => (
+                <div key={i} className="login-item flex items-center gap-3 rounded-xl px-3.5 py-2.5 border border-white/[0.04] group hover:border-blue-500/15 hover:bg-blue-500/[0.02] transition-all duration-200"
+                  style={{ background: "rgba(255,255,255,0.01)" }}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block flex-shrink-0 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+                  <p className="text-white/60 text-xs font-medium tracking-wide group-hover:text-white/80 transition-colors">{text}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3.5 mt-1">
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-3 text-white font-black text-xs tracking-widest uppercase rounded-xl py-3.5 transition-all duration-200 active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{
+                  background: "linear-gradient(135deg, #2563eb 0%, #dc2626 100%)",
+                  border: "1px solid rgba(59,130,246,0.35)",
+                  boxShadow: "0 4px 20px rgba(37,99,235,0.25), inset 1px 0 rgba(255,255,255,0.12)"
+                }}
+              >
+                {loading ? (
+                  <>
+                    <div style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign in with Google"
+                )}
+              </button>
+
+              {popupBlocked && (
+                <p className="text-red-400 text-[11px] text-center leading-relaxed">
+                  Popup was blocked. Please allow popups for this site, then try again.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-
-        {errorMessage && (
-          <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm text-center">
-            {errorMessage}
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={handleGoogleLogin}
-          disabled={loading}
-          className="w-full flex items-center justify-center gap-3 py-3.5 px-4 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded-xl border border-slate-300 shadow-sm hover:shadow transition duration-200 disabled:opacity-50"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-          </svg>
-          {loading ? "Signing in..." : "Sign in with Google"}
-        </button>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
