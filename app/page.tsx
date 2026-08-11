@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from "firebase/auth";
 import { collection, query, where, getDocs } from "firebase/firestore";
-import { auth, googleProvider, db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -12,7 +12,6 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
 
-  // Redirect to profile view if session already exists
   useEffect(() => {
     const sessionStr = localStorage.getItem("quizinc_session");
     if (sessionStr) {
@@ -20,56 +19,94 @@ export default function LoginPage() {
     }
   }, [router]);
 
+  // Optional: Keep redirect result handler for actual mobile devices
+  useEffect(() => {
+    let isMounted = true;
+    const handleRedirectAuth = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (!result || !isMounted) return;
+
+        setLoading(true);
+        await processUserSession(result.user);
+      } catch (error) {
+        if (isMounted) {
+          console.error("Google redirect login error:", error);
+          // Ignore empty state errors if it's just a remount artifact
+          if (!(error as Error).message?.includes("missing initial state")) {
+            setErrorMessage("Failed to sign in with Google. Please try again.");
+          }
+          setLoading(false);
+        }
+      }
+    };
+
+    handleRedirectAuth();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  const processUserSession = async (user: any) => {
+    const userEmail = user.email;
+    if (!userEmail) {
+      setErrorMessage("Could not retrieve email from Google account.");
+      setLoading(false);
+      return;
+    }
+
+    const passoutYearsGroup = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
+    let foundPath: { passoutYear: string; docId: string } | null = null;
+
+    for (const year of passoutYearsGroup) {
+      const membersRef = collection(db, "allMembers", year, "members");
+      const q = query(membersRef, where("email", "==", userEmail));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        const docSnap = querySnapshot.docs[0];
+        foundPath = { passoutYear: year, docId: docSnap.id };
+        break;
+      }
+    }
+
+    if (foundPath) {
+      localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
+      router.push("/profile");
+    } else {
+      const tempSession = {
+        email: userEmail,
+        fullName: user.displayName || "",
+        profilePhoto: user.photoURL || "",
+      };
+      localStorage.setItem("quizinc_temp_session", JSON.stringify(tempSession));
+      router.push("/profile/edit");
+    }
+  };
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setErrorMessage("");
-
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      const userEmail = user.email;
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
 
-      if (!userEmail) {
-        setErrorMessage("Could not retrieve email from Google account.");
-        setLoading(false);
-        return;
-      }
+      // Detect if user is on mobile
+      const isMobile = /Mobi|Android/i.test(navigator.userAgent);
 
-      // Check if user already exists in Firestore
-      const passoutYearsGroup = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
-      let foundPath: { passoutYear: string; docId: string } | null = null;
-
-      for (const year of passoutYearsGroup) {
-        const membersRef = collection(db, "allMembers", year, "members");
-        const q = query(membersRef, where("email", "==", userEmail));
-        const querySnapshot = await getDocs(q);
-
-        if (!querySnapshot.empty) {
-          const docSnap = querySnapshot.docs[0];
-          foundPath = { passoutYear: year, docId: docSnap.id };
-          break;
-        }
-      }
-
-      if (foundPath) {
-        // Existing user -> Store session and go to view profile page
-        localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
-        router.push("/profile");
+      if (isMobile) {
+        // Use redirect for mobile devices
+        await signInWithRedirect(auth, provider);
       } else {
-        // New user -> Do NOT create in DB yet. Store temp session data for the form.
-        const tempSession = {
-          email: userEmail,
-          fullName: user.displayName || "",
-          profilePhoto: user.photoURL || "",
-        };
-        localStorage.setItem("quizinc_temp_session", JSON.stringify(tempSession));
-        
-        // Go straight to edit page for new users to fill blanks and create record on submit
-        router.push("/profile/edit");
+        // Use popup for laptops/desktops to completely bypass sessionStorage bugs on localhost
+        const result = await signInWithPopup(auth, provider);
+        await processUserSession(result.user);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Google login error:", error);
-      setErrorMessage("Failed to sign in with Google. Please try again.");
+      if (error.code !== "auth/cancelled-popup-request") {
+        setErrorMessage("Failed to sign in with Google. Please try again.");
+      }
       setLoading(false);
     }
   };
