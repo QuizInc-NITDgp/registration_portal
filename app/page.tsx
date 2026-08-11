@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from "firebase/auth";
+import { signInWithPopup, signInWithRedirect, GoogleAuthProvider, onAuthStateChanged } from "firebase/auth";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
@@ -12,7 +12,7 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
 
-  // 1. Check existing session on mount
+  // 1. Check local session storage on mount
   useEffect(() => {
     const sessionStr = localStorage.getItem("quizinc_session");
     if (sessionStr) {
@@ -20,7 +20,6 @@ export default function LoginPage() {
     }
   }, [router]);
 
-  // Shared session processing logic
   const processUserSession = async (user: any) => {
     const userEmail = user.email;
     if (!userEmail) {
@@ -29,7 +28,6 @@ export default function LoginPage() {
       return;
     }
 
-    console.log("Processing session for:", userEmail);
     const passoutYearsGroup = ["2024", "2025", "2026", "2027", "2028", "2029", "2030"];
     let foundPath: { passoutYear: string; docId: string } | null = null;
 
@@ -46,11 +44,9 @@ export default function LoginPage() {
     }
 
     if (foundPath) {
-      console.log("Member found! Redirecting to /profile");
       localStorage.setItem("quizinc_session", JSON.stringify(foundPath));
       router.push("/profile");
     } else {
-      console.log("Member not found. Redirecting to /profile/edit");
       const tempSession = {
         email: userEmail,
         fullName: user.displayName || "",
@@ -61,40 +57,16 @@ export default function LoginPage() {
     }
   };
 
-  // 2. Handle incoming redirect results reliably on mobile load
+  // 2. Use onAuthStateChanged to reliably catch redirect / login completions
   useEffect(() => {
-    let isMounted = true;
-
-    const handleRedirectAuth = async () => {
-      try {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
         setLoading(true);
-        const result = await getRedirectResult(auth);
-        
-        if (!isMounted) return;
-
-        if (result && result.user) {
-          console.log("Redirect result detected successfully:", result.user.email);
-          await processUserSession(result.user);
-        } else {
-          // No active redirect payload found, clear loading state
-          setLoading(false);
-        }
-      } catch (error: any) {
-        if (isMounted) {
-          console.error("Google redirect login error:", error);
-          if (error.code !== "auth/internal-error" && !error.message?.includes("missing initial state")) {
-            setErrorMessage("Failed to sign in with Google. Please try again.");
-          }
-          setLoading(false);
-        }
+        await processUserSession(user);
       }
-    };
+    });
 
-    handleRedirectAuth();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => unsubscribe();
   }, [router]);
 
   const handleGoogleLogin = async () => {
@@ -108,10 +80,8 @@ export default function LoginPage() {
       const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
       if (isMobile) {
-        // Mobile uses redirect
         await signInWithRedirect(auth, provider);
       } else {
-        // Desktop uses popup
         const result = await signInWithPopup(auth, provider);
         await processUserSession(result.user);
       }
